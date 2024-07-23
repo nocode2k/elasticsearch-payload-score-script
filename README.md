@@ -1,8 +1,10 @@
-### elasticsearch : payload-score-query Plugin
+### elasticsearch : payload-score-script Plugin
 
 
 
-T-Shirt  상품 중에서 선택 옵션의 판매수량이 많거나 재고 수량이 많은 (혹은 적은) 상품을 검색 순위 (가중치) 계산에 포함하려면 어떻게 해야할까요?
+T-Shirt  상품 중에서 선택 옵션의 판매수량이 많거나 재고 수량이 많은 (혹은 적은) 상품을 검색 순위에 포함하려면 어떻게 해야할까요?
+
+(* payload-score-query Plugin에서는 검색결과를 결정하는 플러그인이었다면 payload-score-script Plugin은 검색 순위만 결정합니다.)
 
 Lucene이 제공하는 PayloadScoreQuery를 사용하면 Term의 차이를  구분할 수 있습니다. Lucene에서는 실제적으로 우리가 저장한 Payload 데이터를 "|"와 같은 문자 뒤의 숫자를 구분하여 tf에 곱한 다음에 가중치 계산을 하고 있습니다.
 
@@ -73,6 +75,13 @@ POST paylaod_score_query/_doc/3
   "name" : "T-shirt XL",
   "color" : "blue|1 yellow|2"
 }
+
+POST paylaod_score_query/_doc/4
+{
+  "name" : "T-shirt XL",
+  "color" : "blue|1 yellow|10"
+}
+
 ```
 
 
@@ -132,31 +141,26 @@ GET paylaod_score_query/_termvectors/1?fields=color
 
 
 
-## Plugin을 사용하지 않은 Span Query 결과 확인：
+## Plugin을 사용하지 않은 function_score Query 결과 확인：
 
-payload_delimiter가 적용된 color 필드를 포함하여 span query를 실행합니다.
+payload_delimiter가 적용된 color 필드를 포함하여 function_score query를 실행합니다.
 
 ```json
-GET paylaod_score_query/_search
+GET /paylaod_score_query/_search
 {
+  "explain": false,
   "query": {
-    "bool": {
-      "must": [
+    "function_score": {
+      "query": {
+        "match": {
+          "name": "t-shirt"
+        }
+      },
+      "functions": [
         {
-          "match": {
-            "name": "t-shirt"
-          }
-        },
-        {
-          "span_or": {
-            "clauses": [
-              {
-                "span_term": {
-                  "color": "yellow"
-                }
-              }
-            ]
-          }
+          "filter": { "match": { "color": "yellow" } },
+          "random_score": {},
+          "weight": 10
         }
       ]
     }
@@ -166,43 +170,59 @@ GET paylaod_score_query/_search
 
 
 
-아래의 실행 결과를 보면 Elasticsearch에서 payload score query를 지원하지 않기 때문에 color필드의 yellow|2 값을 가진 문서 _id 3의 가중치(score)가 yellow|3값을 가진 문서 _id 1보다 높은 것을 확인할 수 있습니다.
+아래의 실행 결과를 보면 Elasticsearch에서 payload score query를 지원하지 않기 때문에 color필드의 yellow|3 값을 가진 문서 _id 1의 가중치(score)가 yellow|10값을 가진 문서 _id 4보다 높은 것을 확인할 수 있습니다.
 
 ```json
 {
-  "took" : 845,
-  "timed_out" : false,
-  "_shards" : {
-    "total" : 1,
-    "successful" : 1,
-    "skipped" : 0,
-    "failed" : 0
+  "took": 0,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
   },
-  "hits" : {
-    "total" : {
-      "value" : 2,
-      "relation" : "eq"
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
     },
-    "max_score" : 0.6121877,
-    "hits" : [
+    "max_score": 21.072102,
+    "hits": [
       {
-        "_index" : "paylaod_score_query",
-        "_type" : "_doc",
-        "_id" : "3",
-        "_score" : 0.6121877,
-        "_source" : {
-          "name" : "T-shirt XL",
-          "color" : "blue|1 yellow|2"
+        "_index": "paylaod_score_query",
+        "_id": "1",
+        "_score": 21.072102,
+        "_source": {
+          "name": "T-shirt S",
+          "color": "blue|1 green|2 yellow|3"
         }
       },
       {
-        "_index" : "paylaod_score_query",
-        "_type" : "_doc",
-        "_id" : "1",
-        "_score" : 0.5546068,
-        "_source" : {
-          "name" : "T-shirt S",
-          "color" : "blue|1 green|2 yellow|3"
+        "_index": "paylaod_score_query",
+        "_id": "3",
+        "_score": 21.072102,
+        "_source": {
+          "name": "T-shirt XL",
+          "color": "blue|1 yellow|2"
+        }
+      },
+      {
+        "_index": "paylaod_score_query",
+        "_id": "4",
+        "_score": 21.072102,
+        "_source": {
+          "name": "T-shirt XL",
+          "color": "blue|1 yellow|10"
+        }
+      },
+      {
+        "_index": "paylaod_score_query",
+        "_id": "2",
+        "_score": 0.21072102,
+        "_source": {
+          "name": "T-shirt M",
+          "color": "blue|1 green|2 red|3"
         }
       }
     ]
@@ -219,124 +239,50 @@ GET paylaod_score_query/_search
 
 **지금부터 payload데이터를 검색결과 가중치에 포함할 수 있도록 구현한 Elasticsearch Plugin의 Class와 주요 Method를 설명한 다음에 Plugin 설치 후 그 결과를 확인하겠습니다.**
 
+## 참고) Advanced scripts using script engines
 
-
-## Lucene PayloadScoreQuery：
-
-먼저 Lucene의 PayloadScoreQuery 구성 메소드를 살펴보면：
-
-```java
-  /**
-   * Creates a new PayloadScoreQuery
-   * @param wrappedQuery the query to wrap
-   * @param function a PayloadFunction to use to modify the scores
-   * @param decoder a PayloadDecoder to convert payloads into float values
-   * @param includeSpanScore include both span score and payload score in the scoring algorithm
-   */
-  public PayloadScoreQuery(SpanQuery wrappedQuery, PayloadFunction function, PayloadDecoder decoder, boolean includeSpanScore) {
-    this.wrappedQuery = Objects.requireNonNull(wrappedQuery);
-    this.function = Objects.requireNonNull(function);
-    this.decoder = Objects.requireNonNull(decoder);
-    this.includeSpanScore = includeSpanScore;
-  }
-```
-
-
-
-이 메소드는 4개의 파라미터가 필요합니다 ：
-
-- SpanQuery wrappedQuery. 반드시 spanQuery이어야 합니다.
-- PayloadFunction function. 여러개의 텀이 매칭되었을 경우, 가중치, max, min, sum을 정의합니다.
-- PayloadDecoder decoder. float 값으로 변환합니다. int or float type이어야 합니다.
-- boolean includeSpanScore.  저장되어 있는 score를 사용할지 여부 입니다.
-
+https://www.elastic.co/guide/en/elasticsearch/reference/8.5/modules-scripting-engine.html
 
 
 ## CustomPayloadScoreQueryPlugin
 
-다음과 같이 CustomPayloadScoreQueryPlugin 클래스에 CustomPayloadScoreQueryBuilder를 생성하는 코드를 추가합니다.
+다음과 같이 CustomPayloadScoreQueryPlugin 클래스에 ScriptEngine을 상속받은 구현체를 추가합니다.
 
 ```java
-public class CustomPayloadScoreQueryPlugin extends Plugin implements SearchPlugin {
+private static class NoCodeScriptEngine implements ScriptEngine {
+    private final String _SOURCE_VALUE = "payload_script";
+    private final String _LANG_VALUE = "nocode";
+
     @Override
-    public List<QuerySpec<?>> getQueries() {
-        return Collections.singletonList(
-            new QuerySpec<>(CustomPayloadScoreQueryBuilder.NAME, CustomPayloadScoreQueryBuilder::new, CustomPayloadScoreQueryBuilder::fromXContent)
-        );
+    public String getType() {
+        return _LANG_VALUE;
     }
-}
+
+    @Override
+    public <T> T compile(String scriptName, String scriptSource, ScriptContext<T> context, Map<String, String> params) {
+        ... 생략 ...
+    }
 ```
 
 
 
-## CustomPayloadScoreQueryBuilder
+## CustomPayloadScoreFactory
 
-### fromXContent 메소드의 구현 ：
+### ScoreScript 메소드의 구현 ：
 
 ```js
-public static QueryBuilder fromXContent(XContentParser parser) throws IOException {
-    String currentFieldName = null;
-    XContentParser.Token token;
-    QueryBuilder iqb = null;
-
-    String func = null;
-    String calc = null;
-    boolean includeSpanScore = false;
-    while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
-        if (token == XContentParser.Token.FIELD_NAME) {
-            currentFieldName = parser.currentName();
-        } else if (token == XContentParser.Token.START_OBJECT) {
-            if (QUERY_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-                iqb = parseInnerQueryBuilder(parser);
-            } else {
-                throw new ParsingException(parser.getTokenLocation(),
-                    "[" + NAME + "] query does not support [" + currentFieldName + "]");
-            }
-        } else if (token.isValue()) {
-            if (FUNC_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-                func = parser.text();
-            } else if (CALC_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-                calc = parser.text();
-            } else if (INCLUDE_SPAN_SCORE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-                includeSpanScore = parser.booleanValue();
-            } else {
-                throw new ParsingException(parser.getTokenLocation(),
-                    "[" + NAME + "] query does not support [" + currentFieldName + "]");
-            }
-        }
+int freq = postings.freq();
+float sumPayload = 0.0f;
+for(int i = 0; i < freq; i ++) {
+    postings.nextPosition();
+    BytesRef payload = postings.getPayload();
+    if(payload != null) {
+        sumPayload += ByteBuffer.wrap(payload.bytes, payload.offset, payload.length)
+            .order(ByteOrder.BIG_ENDIAN).getFloat();
     }
-    return new PayloadScoreQueryBuilder(iqb, func, calc, includeSpanScore);
 }
+return sumPayload;
 ```
-
-
-
-### doToQuery 메소드의  PayloadScoreQuery 구조：
-
-```js
-protected Query doToQuery(SearchExecutionContext context) throws IOException {
-        // query  parse
-        SpanQuery spanQuery = null;
-        try {
-            spanQuery = (SpanQuery) query.toQuery(context);
-        } catch (IOException e) {
-            throw new IllegalArgumentException(e);
-        }
-
-        if (spanQuery == null) {
-            throw new IllegalArgumentException("SpanQuery is null");
-        }
-
-        PayloadFunction payloadFunction = CustomPayloadUtils.getPayloadFunction(this.func);
-        if (payloadFunction == null) {
-            throw new IllegalArgumentException("Unknown payload function: " + func);
-        }
-        PayloadDecoder payloadDecoder = CustomPayloadUtils.getPayloadDecoder("float");
-
-        return new PayloadScoreQuery(spanQuery, payloadFunction, payloadDecoder, this.includeSpanScore);
-    }
-```
-
 
 
 ## Build source code
@@ -355,7 +301,7 @@ $ gradle clean build
 
 ```
 $ cd $ES_HOME
-$ ./bin/elasticsearch-plugin install file:///$PROJECT/build/distributions/payload-score-0.1.zip
+$ ./bin/elasticsearch-plugin install file:///$PROJECT/build/distributions/payload-score-script-0.1.zip
 ```
 
 
@@ -371,34 +317,28 @@ $ ./bin/elasticsearch
 
 ## Sample API 실행
 
-customize한 plugin의 payload_score api를 사용하여 span query를 실행합니다.
+customize한 plugin의 payload_score api를 사용하여 function_score query를 실행합니다.
 
 ```json
 GET /paylaod_score_query/_search
 {
-  "explain": false, 
+  "explain": false,
   "query": {
-    "bool": {
-      "must": [
+    "function_score": {
+      "query": {
+        "match": {
+          "name": "t-shirt"
+        }
+      },
+      "functions": [
         {
-          "match": {
-            "name": "t-shirt"
-          }
-        },
-        {
-          "payload_score": {
-            "func": "sum",
-            "calc": "sum",
-            "includeSpanScore": "false",
-            "query": {
-              "span_or": {
-                "clauses": [
-                  {
-                    "span_term": {
-                      "color": "yellow"
-                    }
-                  }
-                ]
+          "script_score": {
+            "script": {
+              "source": "payload_script",
+              "lang" : "nocode",
+              "params": {
+                "field": "color",
+                "term": "yellow"
               }
             }
           }
@@ -411,43 +351,59 @@ GET /paylaod_score_query/_search
 
 
 
-아래의 API 응답결과를 확인해보면 일반적인 Span Query를 실행한 결과와 다르게 yellow|3 이 포함된 문서 _id 1의 가중치(score)가 적용된 것을 확인할 수 있습니다.
+아래의 API 응답결과를 확인해보면 일반적인 function_score Query를 실행한 결과와 다르게 yellow|10 이 포함된 문서 _id 4의 가중치(score)가 적용된 것을 확인할 수 있습니다.
 
 ```json
 {
-  "took" : 14,
-  "timed_out" : false,
-  "_shards" : {
-    "total" : 1,
-    "successful" : 1,
-    "skipped" : 0,
-    "failed" : 0
+  "took": 2,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
   },
-  "hits" : {
-    "total" : {
-      "value" : 2,
-      "relation" : "eq"
+  "hits": {
+    "total": {
+      "value": 4,
+      "relation": "eq"
     },
-    "max_score" : 3.210721,
-    "hits" : [
+    "max_score": 2.1072102,
+    "hits": [
       {
-        "_index" : "paylaod_score_query",
-        "_type" : "_doc",
-        "_id" : "1",
-        "_score" : 3.210721,
-        "_source" : {
-          "name" : "T-shirt S",
-          "color" : "blue|1 green|2 yellow|3"
+        "_index": "paylaod_score_query",
+        "_id": "4",
+        "_score": 2.1072102,
+        "_source": {
+          "name": "T-shirt XL",
+          "color": "blue|1 yellow|10"
         }
       },
       {
-        "_index" : "paylaod_score_query",
-        "_type" : "_doc",
-        "_id" : "3",
-        "_score" : 2.210721,
-        "_source" : {
-          "name" : "T-shirt XL",
-          "color" : "blue|1 yellow|2"
+        "_index": "paylaod_score_query",
+        "_id": "1",
+        "_score": 0.63216305,
+        "_source": {
+          "name": "T-shirt S",
+          "color": "blue|1 green|2 yellow|3"
+        }
+      },
+      {
+        "_index": "paylaod_score_query",
+        "_id": "3",
+        "_score": 0.42144203,
+        "_source": {
+          "name": "T-shirt XL",
+          "color": "blue|1 yellow|2"
+        }
+      },
+      {
+        "_index": "paylaod_score_query",
+        "_id": "2",
+        "_score": 0,
+        "_source": {
+          "name": "T-shirt M",
+          "color": "blue|1 green|2 red|3"
         }
       }
     ]
