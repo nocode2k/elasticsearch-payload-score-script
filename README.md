@@ -244,9 +244,9 @@ GET /paylaod_score_query/_search
 https://www.elastic.co/guide/en/elasticsearch/reference/8.5/modules-scripting-engine.html
 
 
-## CustomPayloadScoreQueryPlugin
+## CustomPayloadScoreScriptPlugin
 
-다음과 같이 CustomPayloadScoreQueryPlugin 클래스에 ScriptEngine을 상속받은 구현체를 추가합니다.
+다음과 같이 CustomPayloadScoreScriptPlugin 클래스에 ScriptEngine을 상속받은 구현체를 추가합니다.
 
 ```java
 private static class NoCodeScriptEngine implements ScriptEngine {
